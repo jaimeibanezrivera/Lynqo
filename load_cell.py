@@ -120,10 +120,10 @@ if __name__ == "__main__":
     hx = HX711(data_pin=5, clock_pin=6)
 
     # Set reading format to LSB, MSB
-    hx.set_reading_format("LSB", "MSB")
+    hx.set_reading_format("MSB", "MSB")
 
     # Set reference unit and tare
-    hx.set_reference_unit(114)  # Adjust this after calibration
+    hx.set_reference_unit(16)  # Adjust this after calibration
     hx.tare()
 
     print("Tare done! Add weight now...")
