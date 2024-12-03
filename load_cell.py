@@ -1,79 +1,134 @@
 import time
 import sys
-import RPi.GPIO as GPIO
-from hx711 import HX711
+import lgpio
 
-def cleanAndExit():
-    print("Cleaning...")
-        
+
+class HX711:
+    def __init__(self, data_pin, clock_pin, gpio_chip=0):
+        self.data_pin = data_pin
+        self.clock_pin = clock_pin
+        self.gpio_chip = gpio_chip
+        self.reference_unit = 1
+        self.offset = 0
+
+        # Open GPIO chip
+        self.handle = lgpio.gpiochip_open(self.gpio_chip)
+
+        # Set up pins
+        lgpio.gpio_claim_input(self.handle, self.data_pin)
+        lgpio.gpio_claim_output(self.handle, self.clock_pin)
+        lgpio.gpio_write(self.handle, self.clock_pin, 0)  # Set clock pin low
+
+    def set_reading_format(self, byte_format, bit_format):
+        """
+        Set the byte and bit order. For now, we just keep this for compatibility.
+        """
+        if byte_format != "MSB" or bit_format != "MSB":
+            raise NotImplementedError("Only MSB, MSB is currently supported.")
+
+    def set_reference_unit(self, reference_unit):
+        """
+        Set the reference unit for converting raw data into meaningful weight values.
+        """
+        self.reference_unit = reference_unit
+
+    def read(self):
+        """
+        Read raw 24-bit data from the HX711.
+        """
+        count = 0
+
+        # Wait for the data pin to go low (ready)
+        while lgpio.gpio_read(self.handle, self.data_pin) == 1:
+            pass
+
+        # Read 24 bits of data
+        for _ in range(24):
+            lgpio.gpio_write(self.handle, self.clock_pin, 1)
+            count = count << 1
+            if lgpio.gpio_read(self.handle, self.data_pin):
+                count += 1
+            lgpio.gpio_write(self.handle, self.clock_pin, 0)
+
+        # Set the clock pin high for one extra bit
+        lgpio.gpio_write(self.handle, self.clock_pin, 1)
+        lgpio.gpio_write(self.handle, self.clock_pin, 0)
+
+        # Convert from two's complement
+        if count & 0x800000:
+            count -= 0x1000000
+
+        return count
+
+    def tare(self):
+        """
+        Tare the scale (set the current reading as the zero point).
+        """
+        print("Taring... Please ensure the load cell is empty.")
+        time.sleep(1)
+        readings = [self.read() for _ in range(10)]
+        self.offset = sum(readings) / len(readings)
+        print(f"Tare complete. Offset: {self.offset}")
+
+    def get_weight(self, times=5):
+        """
+        Get the weight, adjusted by the tare offset and reference unit.
+        """
+        readings = [self.read() for _ in range(times)]
+        raw_value = sum(readings) / len(readings)
+        weight = (raw_value - self.offset) / self.reference_unit
+        return weight
+
+    def power_down(self):
+        """
+        Power down the HX711 to save energy.
+        """
+        lgpio.gpio_write(self.handle, self.clock_pin, 1)
+        time.sleep(0.0001)  # Wait for a short time
+
+    def power_up(self):
+        """
+        Power up the HX711.
+        """
+        lgpio.gpio_write(self.handle, self.clock_pin, 0)
+        time.sleep(0.0001)  # Wait for a short time
+
+    def cleanup(self):
+        """
+        Clean up GPIO resources.
+        """
+        lgpio.gpiochip_close(self.handle)
+
+
+def clean_and_exit(hx):
+    """
+    Clean up and exit the program.
+    """
+    print("Cleaning up...")
+    hx.cleanup()
     print("Bye!")
     sys.exit()
 
-hx = HX711(5, 6)
 
-'''
-I've found out that, for some reason, the order of the bytes is not always the same between versions of python,
-and the hx711 itself. I still need to figure out why.
+if __name__ == "__main__":
+    # Initialize HX711 with pins 5 (DT) and 6 (SCK)
+    hx = HX711(data_pin=5, clock_pin=6)
+    hx.set_reading_format("MSB", "MSB")
+    hx.set_reference_unit(114)  # Set the reference unit (calibrate this value)
+    hx.tare()  # Perform tare
 
-If you're experiencing super random values, change these values to MSB or LSB until you get more stable values.
-There is some code below to debug and log the order of the bits and the bytes.
+    print("Tare done! Add weight now...")
 
-The first parameter is the order in which the bytes are used to build the "long" value. The second paramter is
-the order of the bits inside each byte. According to the HX711 Datasheet, the second parameter is MSB so you
-shouldn't need to modify it.
-'''
-hx.set_reading_format("MSB", "MSB")
-
-'''
-# HOW TO CALCULATE THE REFFERENCE UNIT
-1. Set the reference unit to 1 and make sure the offset value is set.
-2. Load you sensor with 1kg or with anything you know exactly how much it weights.
-3. Write down the 'long' value you're getting. Make sure you're getting somewhat consistent values.
-    - This values might be in the order of millions, varying by hundreds or thousands and it's ok.
-4. To get the wright in grams, calculate the reference unit using the following formula:
-        
-    referenceUnit = longValueWithOffset / 1000
-        
-In my case, the longValueWithOffset was around 114000 so my reference unit is 114,
-because if I used the 114000, I'd be getting milligrams instead of grams.
-'''
-
-referenceUnit = 114
-hx.set_reference_unit(referenceUnit)
-
-hx.reset()
-
-hx.tare()
-
-print("Tare done! Add weight now...")
-
-# to use both channels, you'll need to tare them both
-#hx.tare_A()
-#hx.tare_B()
-
-while True:
     try:
-        # These three lines are usefull to debug wether to use MSB or LSB in the reading formats
-        # for the first parameter of "hx.set_reading_format("LSB", "MSB")".
-        # Comment the two lines "val = hx.get_weight(5)" and "print val" and uncomment these three lines to see what it prints.
-        
-        # np_arr8_string = hx.get_np_arr8_string()
-        # binary_string = hx.get_binary_string()
-        # print binary_string + " " + np_arr8_string
-        
-        # Prints the weight. Comment if you're debbuging the MSB and LSB issue.
-        val = hx.get_weight(5)
-        print(val)
+        while True:
+            # Get weight and print it
+            weight = hx.get_weight(5)  # Average over 5 readings
+            print(f"Weight: {weight:.2f} g")
 
-        # To get weight from both channels (if you have load cells hooked up 
-        # to both channel A and B), do something like this
-        #val_A = hx.get_weight_A(5)
-        #val_B = hx.get_weight_B(5)
-        #print "A: %s  B: %s" % ( val_A, val_B )
-
-        hx.power_down()
-        hx.power_up()
-        time.sleep(0.1)
+            # Power down and up for stability
+            hx.power_down()
+            hx.power_up()
+            time.sleep(0.1)
 
     except (KeyboardInterrupt, SystemExit):
-        cleanAndExit()
+        clean_and_exit(hx)
