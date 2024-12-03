@@ -2,7 +2,7 @@ import time
 import sys
 import lgpio
 
-
+#hx711 library giving problems, so we wrote the important functions here
 class HX711:
     def __init__(self, data_pin, clock_pin, gpio_chip=0):
         self.data_pin = data_pin
