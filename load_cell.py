@@ -1,71 +1,79 @@
-import lgpio
 import time
+import sys
+import RPi.GPIO as GPIO
+from hx711 import HX711
 
-class HX711:
-    def __init__(self, data_pin, clock_pin, gpio_chip=0):
-        self.data_pin = data_pin
-        self.clock_pin = clock_pin
-        self.gpio_chip = gpio_chip
+def cleanAndExit():
+    print("Cleaning...")
+        
+    print("Bye!")
+    sys.exit()
 
-        # Open GPIO chip
-        self.handle = lgpio.gpiochip_open(self.gpio_chip)
+hx = HX711(5, 6)
 
-        # Set up pins
-        lgpio.gpio_claim_input(self.handle, self.data_pin)
-        lgpio.gpio_claim_output(self.handle, self.clock_pin)
-        lgpio.gpio_write(self.handle, self.clock_pin, 0)  # Set clock pin low
+'''
+I've found out that, for some reason, the order of the bytes is not always the same between versions of python,
+and the hx711 itself. I still need to figure out why.
 
-    def read(self):
-        count = 0
+If you're experiencing super random values, change these values to MSB or LSB until you get more stable values.
+There is some code below to debug and log the order of the bits and the bytes.
 
-        # Wait until the data line goes low (ready)
-        while lgpio.gpio_read(self.handle, self.data_pin) == 1:
-            pass
+The first parameter is the order in which the bytes are used to build the "long" value. The second paramter is
+the order of the bits inside each byte. According to the HX711 Datasheet, the second parameter is MSB so you
+shouldn't need to modify it.
+'''
+hx.set_reading_format("MSB", "MSB")
 
-        # Read 24 bits of data from the HX711
-        for _ in range(24):
-            lgpio.gpio_write(self.handle, self.clock_pin, 1)
-            count = count << 1
-            if lgpio.gpio_read(self.handle, self.data_pin):
-                count += 1
-            lgpio.gpio_write(self.handle, self.clock_pin, 0)
+'''
+# HOW TO CALCULATE THE REFFERENCE UNIT
+1. Set the reference unit to 1 and make sure the offset value is set.
+2. Load you sensor with 1kg or with anything you know exactly how much it weights.
+3. Write down the 'long' value you're getting. Make sure you're getting somewhat consistent values.
+    - This values might be in the order of millions, varying by hundreds or thousands and it's ok.
+4. To get the wright in grams, calculate the reference unit using the following formula:
+        
+    referenceUnit = longValueWithOffset / 1000
+        
+In my case, the longValueWithOffset was around 114000 so my reference unit is 114,
+because if I used the 114000, I'd be getting milligrams instead of grams.
+'''
 
-        # Set the clock pin high for one extra bit to signal end of reading
-        lgpio.gpio_write(self.handle, self.clock_pin, 1)
-        lgpio.gpio_write(self.handle, self.clock_pin, 0)
+referenceUnit = 114
+hx.set_reference_unit(referenceUnit)
 
-        # Convert 2's complement if needed
-        if count & 0x800000:
-            count -= 0x1000000
+hx.reset()
 
-        return count
+hx.tare()
 
-    def cleanup(self):
-        # Release GPIO pins and close the chip
-        lgpio.gpiochip_close(self.handle)
+print("Tare done! Add weight now...")
 
-def setup():
-    data_pin = 5  # GPIO pin connected to HX711 DT (Data)
-    clock_pin = 6  # GPIO pin connected to HX711 SCK (Clock)
-    hx = HX711(data_pin, clock_pin)
-    return hx
+# to use both channels, you'll need to tare them both
+#hx.tare_A()
+#hx.tare_B()
 
-def loop(hx):
+while True:
     try:
-        while True:
-            weight = hx.read()
-            print(f"Raw Weight: {weight}")
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        print("Exiting...")
+        # These three lines are usefull to debug wether to use MSB or LSB in the reading formats
+        # for the first parameter of "hx.set_reading_format("LSB", "MSB")".
+        # Comment the two lines "val = hx.get_weight(5)" and "print val" and uncomment these three lines to see what it prints.
+        
+        # np_arr8_string = hx.get_np_arr8_string()
+        # binary_string = hx.get_binary_string()
+        # print binary_string + " " + np_arr8_string
+        
+        # Prints the weight. Comment if you're debbuging the MSB and LSB issue.
+        val = hx.get_weight(5)
+        print(val)
 
-def clean_and_exit(hx):
-    hx.cleanup()
-    print("GPIO cleaned up.")
+        # To get weight from both channels (if you have load cells hooked up 
+        # to both channel A and B), do something like this
+        #val_A = hx.get_weight_A(5)
+        #val_B = hx.get_weight_B(5)
+        #print "A: %s  B: %s" % ( val_A, val_B )
 
-if __name__ == "__main__":
-    hx = setup()
-    try:
-        loop(hx)
-    finally:
-        clean_and_exit(hx)
+        hx.power_down()
+        hx.power_up()
+        time.sleep(0.1)
+
+    except (KeyboardInterrupt, SystemExit):
+        cleanAndExit()
