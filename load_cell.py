@@ -1,5 +1,5 @@
-import time
 import lgpio
+import time
 
 class HX711:
     def __init__(self, data_pin, clock_pin, gpio_chip=0):
@@ -14,13 +14,6 @@ class HX711:
         lgpio.gpio_claim_input(self.handle, self.data_pin)
         lgpio.gpio_claim_output(self.handle, self.clock_pin)
         lgpio.gpio_write(self.handle, self.clock_pin, 0)  # Set clock pin low
-
-    def tare(self):
-        print("Taring... Make sure there is no weight on the load cell.")
-        time.sleep(1)  # Allow system to stabilize before taring
-        raw_tare_value = self.read()
-        print(f"Tare value: {raw_tare_value}")
-        return raw_tare_value
 
     def read(self):
         count = 0
@@ -55,11 +48,6 @@ def setup():
     data_pin = 5  # GPIO pin connected to HX711 DT (Data)
     clock_pin = 6  # GPIO pin connected to HX711 SCK (Clock)
     hx = HX711(data_pin, clock_pin)
-
-    # Tare the load cell and wait for stabilization
-    tare_value = hx.tare()
-    print("Tare completed.")
-    time.sleep(2)  # Wait 2 seconds to stabilize after taring
     return hx
 
 def loop(hx):
@@ -67,7 +55,7 @@ def loop(hx):
         while True:
             weight = hx.read()
             print(f"Raw Weight: {weight}")
-            time.sleep(0.5)  # Adjust delay based on reading frequency
+            time.sleep(0.1)
     except KeyboardInterrupt:
         print("Exiting...")
 
