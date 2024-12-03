@@ -2,14 +2,16 @@ import time
 import sys
 import lgpio
 
-#hx711 library giving problems, so we wrote the important functions here
+
 class HX711:
     def __init__(self, data_pin, clock_pin, gpio_chip=0):
         self.data_pin = data_pin
         self.clock_pin = clock_pin
         self.gpio_chip = gpio_chip
-        self.reference_unit = 1
         self.offset = 0
+        self.reference_unit = 1
+        self.byte_format = "MSB"  # Default byte order
+        self.bit_format = "MSB"  # Default bit order
 
         # Open GPIO chip
         self.handle = lgpio.gpiochip_open(self.gpio_chip)
@@ -21,20 +23,17 @@ class HX711:
 
     def set_reading_format(self, byte_format, bit_format):
         """
-        Set the byte and bit order. For now, we just keep this for compatibility.
+        Set the byte and bit order. Supported values are MSB or LSB.
         """
-        if byte_format != "MSB" or bit_format != "MSB":
-            raise NotImplementedError("Only MSB, MSB is currently supported.")
-
-    def set_reference_unit(self, reference_unit):
-        """
-        Set the reference unit for converting raw data into meaningful weight values.
-        """
-        self.reference_unit = reference_unit
+        if byte_format not in ["MSB", "LSB"] or bit_format not in ["MSB", "LSB"]:
+            raise ValueError("Byte and Bit format must be either 'MSB' or 'LSB'.")
+        self.byte_format = byte_format
+        self.bit_format = bit_format
+        print(f"Set reading format: Byte={self.byte_format}, Bit={self.bit_format}")
 
     def read(self):
         """
-        Read raw 24-bit data from the HX711.
+        Read raw 24-bit data from the HX711, applying byte and bit order.
         """
         count = 0
 
@@ -50,9 +49,9 @@ class HX711:
                 count += 1
             lgpio.gpio_write(self.handle, self.clock_pin, 0)
 
-        # Set the clock pin high for one extra bit
-        lgpio.gpio_write(self.handle, self.clock_pin, 1)
-        lgpio.gpio_write(self.handle, self.clock_pin, 0)
+        # Apply byte order (reverse bits if LSB)
+        if self.byte_format == "LSB":
+            count = int('{:024b}'.format(count)[::-1], 2)
 
         # Convert from two's complement
         if count & 0x800000:
@@ -60,19 +59,24 @@ class HX711:
 
         return count
 
+    def set_reference_unit(self, reference_unit):
+        """
+        Set the reference unit for converting raw data to weight.
+        """
+        self.reference_unit = reference_unit
+
     def tare(self):
         """
-        Tare the scale (set the current reading as the zero point).
+        Tare the scale (zero out the offset).
         """
-        print("Taring... Please ensure the load cell is empty.")
+        print("Taring... Ensure the scale is empty.")
         time.sleep(1)
-        readings = [self.read() for _ in range(10)]
-        self.offset = sum(readings) / len(readings)
+        self.offset = sum([self.read() for _ in range(10)]) / 10
         print(f"Tare complete. Offset: {self.offset}")
 
     def get_weight(self, times=5):
         """
-        Get the weight, adjusted by the tare offset and reference unit.
+        Get the weight after applying offset and reference unit.
         """
         readings = [self.read() for _ in range(times)]
         raw_value = sum(readings) / len(readings)
@@ -81,51 +85,53 @@ class HX711:
 
     def power_down(self):
         """
-        Power down the HX711 to save energy.
+        Power down the HX711.
         """
         lgpio.gpio_write(self.handle, self.clock_pin, 1)
-        time.sleep(0.0001)  # Wait for a short time
+        time.sleep(0.0001)
 
     def power_up(self):
         """
         Power up the HX711.
         """
         lgpio.gpio_write(self.handle, self.clock_pin, 0)
-        time.sleep(0.0001)  # Wait for a short time
+        time.sleep(0.0001)
 
     def cleanup(self):
         """
         Clean up GPIO resources.
         """
-        lgpio.gpiochip_close(self.handle)
+        if self.handle is not None:
+            lgpio.gpiochip_close(self.handle)
+            self.handle = None
 
 
 def clean_and_exit(hx):
     """
     Clean up and exit the program.
     """
-    print("Cleaning up...")
+    print("Cleaning up GPIO...")
     hx.cleanup()
-    print("Bye!")
+    print("Exiting program.")
     sys.exit()
 
 
 if __name__ == "__main__":
-    # Initialize HX711 with pins 5 (DT) and 6 (SCK)
     hx = HX711(data_pin=5, clock_pin=6)
-    hx.set_reading_format("MSB", "MSB")
-    hx.set_reference_unit(114)  # Set the reference unit (calibrate this value)
-    hx.tare()  # Perform tare
+
+    # Set reading format to LSB, MSB
+    hx.set_reading_format("LSB", "MSB")
+
+    # Set reference unit and tare
+    hx.set_reference_unit(114)  # Adjust this after calibration
+    hx.tare()
 
     print("Tare done! Add weight now...")
 
     try:
         while True:
-            # Get weight and print it
-            weight = hx.get_weight(5)  # Average over 5 readings
+            weight = hx.get_weight(5)
             print(f"Weight: {weight:.2f} g")
-
-            # Power down and up for stability
             hx.power_down()
             hx.power_up()
             time.sleep(0.1)
